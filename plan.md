@@ -60,31 +60,60 @@ I did not know that. Tell us more.
 - `bow` — greeting, conclusion
 - `idle` — default, neutral listening
 
-## Milestones
+## Shipped (M1–M4 complete)
 
-### M1: Environment + hello world (do first)
-- [ ] Install Ollama + pull a model (llama3.2 or similar)
-- [ ] Confirm Reachy SDK installed and robot connects
-- [ ] Confirm Reachy speaker works (play a test sound)
-- [ ] Install Kokoro TTS, generate a test phrase
+- Script format: `[HUMAN]` / `[REACHY gesture=X]` / `[REACHY improv=true]` / `[CONTEXT]`
+- TTS through Reachy's speaker via macOS `say`
+- Named gesture library (11 gestures) + `ListeningAnimator` (continuous idle/speaking motion)
+- VAD → Whisper STT → single LLM call (off-script detection + improv generation combined)
+- Pre-cached TTS and LLM for scripted + `improv=true` turns at load time
+- Per-script episode context injected into LLM system prompt
+- Web UI: structured script editor, perform view, script picker with Edit/Load
+- Git version control at github.com/bartbug/Reachy-cohost
 
-### M2: Script playback (scripted lines only)
-- [ ] Script parser (plain text → turn list)
-- [ ] TTS → Reachy speaker pipeline
-- [ ] Motion gesture executor
-- [ ] Manual advance button (web UI)
+## Roadmap
 
-### M3: Improv
-- [ ] VAD (detect human speech end)
-- [ ] Ollama integration (streaming response)
-- [ ] LLM picks gesture from palette
-- [ ] Blend improv lines back into script context
+### M5: Session logging
+Save a timestamped JSON record for each performance session.
 
-### M4: Polish
-- [ ] Script editor in UI
-- [ ] Gesture preview / override
-- [ ] Latency tuning
+**Contents:**
+- Script name, date/time, duration
+- Each turn: speaker, text, gesture, type (`scripted` | `improv_scripted` | `improv_reactive`), whether it was triggered by VAD or Next button
+- Human turns: what they actually said (Whisper transcript) vs. scripted line, off-script flag
 
-## Open questions (deferred, not blocking M1)
-- How much creative latitude does the LLM get in improv? (tone, length, staying on-topic)
-- Should Reachy's persona/voice be configurable per-script or global?
+**Approach:**
+- `session_logger.py` — `SessionLogger` class, opened at Start, closed at done/shutdown
+- Writes to `sessions/<script-name>-<timestamp>.json`
+- `_on_human_speech_end` and `_play_reachy_turn` emit events to the logger
+- Future: UI to browse/replay past sessions
+
+### M6: Voice quality
+Improve TTS voice beyond the default macOS `say` robot voice.
+
+**Quick win — better macOS voices:**
+- `say -v Zoe` / `say -v Evan` / `say -v Siri` are significantly more natural
+- Per-script voice setting in `[CONTEXT]` block (e.g. `Voice: Zoe`)
+- UI voice selector in the context area
+
+**Bigger win — Kokoro TTS (original plan):**
+- Kokoro was blocked by a blis C extension build issue early on
+- Now that stack is stable, worth a fresh attempt (`pip install kokoro-onnx` avoids the C build)
+- Much higher quality, still fully local, ~200ms latency
+
+**Approach:**
+- Abstract TTS behind a `tts_backend` setting so `say` and Kokoro are swappable
+- Keep `say` as fallback
+
+### M7: Expanded gesture library
+Add richer, more expressive motions — potentially using pre-recorded trajectories from Pollen Robotics' HuggingFace datasets.
+
+**Investigation needed:**
+- Check pollen-robotics HuggingFace space for published Reachy Mini motion files
+- The SDK can replay recorded joint trajectories; if motion datasets exist we can load them without hand-coding
+- Identify gaps in current 11-gesture palette (currently missing: laugh/giggle, thinking-while-moving, impatient, celebratory)
+
+**Approach:**
+- If HF motion files exist: loader that replays trajectories from file
+- If not: hand-code additional gestures in `gestures.py` following existing patterns
+- Consider gesture chaining: sequences of named gestures for longer reactions
+- LLM gesture palette update to include new gestures once added
