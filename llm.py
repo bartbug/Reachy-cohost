@@ -55,38 +55,57 @@ def _build_messages(turns: list[Turn], current_index: int) -> list[dict]:
     return messages
 
 
-def is_off_script(scripted_line: str, actual_line: str) -> bool:
-    """Ask the LLM whether the human went meaningfully off-script."""
+def check_and_respond(
+    scripted_line: str, actual_line: str, turns: list[Turn], current_index: int
+) -> tuple[bool, str, str]:
+    """Single LLM call: detect off-script AND generate improv if needed.
+
+    Returns (off_script, line, gesture).
+    If on-script, line and gesture are empty strings.
+    """
     if not actual_line:
-        return False
+        return False, "", ""
 
-    prompt = f"""You are judging whether a speaker went significantly off-script.
+    history = _build_messages(turns, current_index)
 
-Scripted line: "{scripted_line}"
-What they actually said: "{actual_line}"
-
-Did they introduce a meaningfully new idea, question, or tangent not present in the scripted line?
-Minor rephrasing or omissions do NOT count as off-script.
-Respond with JSON: {{"off_script": true}} or {{"off_script": false}}"""
+    prompt = (
+        f'The scripted line was: "{scripted_line}"\n'
+        f'What the human actually said: "{actual_line}"\n\n'
+        "Did they go meaningfully off-script — introducing a new idea, question, or tangent "
+        "not present in the scripted line? Minor rephrasing or omissions are ON-script.\n\n"
+        'If ON-script respond ONLY with: {"off_script": false}\n'
+        'If OFF-script, respond as Reachy reacting to what they said:\n'
+        '{"off_script": true, "gesture": "<gesture>", "line": "<your reaction>"}'
+    )
+    history.append({"role": "user", "content": prompt})
 
     payload = {
         "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": history,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.0},
+        "options": {"temperature": 0.7},
     }
 
     try:
-        resp = requests.post(OLLAMA_URL, json=payload, timeout=15)
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=20)
         resp.raise_for_status()
         data = json.loads(resp.json()["message"]["content"])
-        result = bool(data.get("off_script", False))
-        print(f"[llm] off_script={result}")
-        return result
+        off_script = bool(data.get("off_script", False))
+        if not off_script:
+            print("[llm] on-script")
+            return False, "", ""
+        line    = data.get("line", "").strip()
+        gesture = data.get("gesture", "idle").strip()
+        valid_gestures = {"nod", "double_nod", "shake", "tilt_right", "tilt_left",
+                          "look_up", "surprised", "bow", "excited", "think", "idle"}
+        if gesture not in valid_gestures:
+            gesture = "idle"
+        print(f"[llm] off-script → gesture={gesture!r} line={line!r}")
+        return True, line, gesture
     except Exception as e:
-        print(f"[llm] off_script check failed: {e}")
-        return False
+        print(f"[llm] check_and_respond failed: {e}")
+        return False, "", ""
 
 
 def generate_improv(turns: list[Turn], current_index: int) -> tuple[str, str]:

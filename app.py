@@ -10,8 +10,8 @@ from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from script_parser import parse_script, Turn
 from gestures import play_gesture, ListeningAnimator
-from tts import speak
-from llm import generate_improv, is_off_script
+from tts import speak, generate_audio, play_audio
+from llm import generate_improv, check_and_respond
 from stt import transcribe
 from vad import VADListener
 
@@ -27,6 +27,11 @@ state = {
     "index": -1,
     "status": "idle",  # idle | waiting | listening | thinking | playing | done
 }
+
+# Audio + LLM cache: id(turn) -> (text, gesture, audio_array)
+# Populated in background after script load. Reactive improv turns are never cached.
+_cache: dict[int, tuple[str, str, "np.ndarray"]] = {}
+_cache_lock = threading.Lock()
 
 _sse_queues: list[queue.Queue] = []
 
@@ -82,16 +87,56 @@ def _rest():
 
 
 # ---------------------------------------------------------------------------
+# Prefetch
+# ---------------------------------------------------------------------------
+
+def _prefetch_script(turns: list):
+    """Background thread: pre-generate TTS (and LLM for improv=true) for all REACHY turns."""
+    with _cache_lock:
+        _cache.clear()
+
+    for i, turn in enumerate(turns):
+        if turn.speaker != "REACHY":
+            continue
+        try:
+            if turn.improv:
+                # Pre-generate LLM line + audio for scripted improv turns
+                line, gesture = generate_improv(turns, i)
+                audio = generate_audio(line)
+                print(f"[prefetch] turn {i} improv → gesture={gesture!r}")
+            else:
+                line = turn.text
+                gesture = turn.gesture
+                audio = generate_audio(line)
+                print(f"[prefetch] turn {i} scripted TTS done")
+
+            with _cache_lock:
+                _cache[id(turn)] = (line, gesture, audio)
+        except Exception as e:
+            print(f"[prefetch] turn {i} failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Playback
 # ---------------------------------------------------------------------------
 
 def _play_reachy_turn(turn: Turn):
-    """Play a REACHY turn. Generates line via LLM if improv. Blocks until done."""
+    """Play a REACHY turn. Uses pre-cached audio/LLM when available. Blocks until done."""
     vad.disable()
     animator.stop()
-    _set_status("playing")
 
-    if turn.improv:
+    # Check cache first
+    with _cache_lock:
+        cached = _cache.get(id(turn))
+
+    if cached:
+        line, gesture, audio = cached
+        turn.text = line
+        turn.gesture = gesture
+        _set_status("playing")
+        print(f"[playback] cache hit → gesture={gesture!r}")
+    elif turn.improv:
+        # Cache miss on a scripted improv turn (prefetch still running) — generate now
         _set_status("thinking")
         with state_lock:
             turns = state["turns"]
@@ -99,9 +144,12 @@ def _play_reachy_turn(turn: Turn):
         line, gesture = generate_improv(turns, idx)
         turn.text = line
         turn.gesture = gesture
+        audio = None  # will use speak() fallback below
         _set_status("playing")
     else:
         gesture = turn.gesture
+        audio = None  # will use speak() fallback below
+        _set_status("playing")
 
     # Estimate how long the named gesture lasts so speaking idle waits for it
     gesture_durations = {
@@ -113,7 +161,10 @@ def _play_reachy_turn(turn: Turn):
 
     play_gesture(mini, gesture)
     animator.start_speaking(gesture_duration=gesture_dur)
-    speak(mini, turn.text)
+    if audio is not None:
+        play_audio(mini, audio)
+    else:
+        speak(mini, turn.text)
     animator.stop()
 
 
@@ -167,26 +218,31 @@ def _on_human_speech_end(audio):
         next_scripted_idx += 1
     has_next_reachy = next_scripted_idx < len(turns)
 
-    off_script = actual_text and scripted_text and is_off_script(scripted_text, actual_text)
+    if not has_next_reachy:
+        _set_status("done")
+        return
 
-    if off_script and has_next_reachy:
-        # Insert an improv reaction before the next scripted REACHY turn
-        improv_turn = Turn(speaker="REACHY", text=actual_text, gesture="idle", improv=True)
+    # Single LLM call: detect off-script AND generate improv line if needed
+    off_script, improv_line, improv_gesture = check_and_respond(
+        scripted_text, actual_text, turns, next_scripted_idx
+    )
+
+    if off_script and improv_line:
+        # Insert reactive improv turn before the next scripted REACHY turn
+        improv_turn = Turn(speaker="REACHY", text=improv_line, gesture=improv_gesture, improv=True)
         with state_lock:
             state["turns"].insert(next_scripted_idx, improv_turn)
             state["index"] = next_scripted_idx
         _broadcast("state", _get_state_snapshot())
         _play_reachy_turn(improv_turn)
         _after_reachy_turn()
-    elif has_next_reachy:
-        # On-script — advance to next scripted REACHY turn
+    else:
+        # On-script — advance to next scripted REACHY turn (likely cache hit)
         with state_lock:
             state["index"] = next_scripted_idx
         _broadcast("state", _get_state_snapshot())
         _play_reachy_turn(turns[next_scripted_idx])
         _after_reachy_turn()
-    else:
-        _set_status("done")
 
 
 def _advance_thread():
@@ -275,6 +331,8 @@ def api_load():
         state["index"] = -1
         state["status"] = "waiting"
     _broadcast("state", _get_state_snapshot())
+    # Pre-generate TTS (and LLM for improv=true turns) in the background
+    threading.Thread(target=_prefetch_script, args=(turns,), daemon=True).start()
     return jsonify({"ok": True, "turns": len(turns)})
 
 
