@@ -1,0 +1,11 @@
+[HUMAN]
+let's see
+
+[REACHY]
+goes to college
+
+[REACHY]
+no
+
+[HUMAN]
+your mom

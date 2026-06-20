@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+/tmp/
+.DS_Store
+/tmp/reachy_tts.aiff
