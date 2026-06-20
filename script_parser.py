@@ -1,6 +1,7 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
+
 
 @dataclass
 class Turn:
@@ -10,12 +11,17 @@ class Turn:
     improv: bool = False
 
 
-def parse_script(path: str) -> tuple[list[Turn], str]:
-    """Parse a script file. Returns (turns, context) where context is the
-    freeform text from an optional [CONTEXT] block at the top of the file."""
+def parse_script(path: str) -> tuple[list[Turn], str, str]:
+    """Parse a script file.
+
+    Returns (turns, personality, topic).
+    - personality: from [PERSONALITY] block (or legacy [CONTEXT])
+    - topic: from [TOPIC] block
+    """
     turns = []
-    context_lines: list[str] = []
-    in_context = False
+    personality_lines: list[str] = []
+    topic_lines: list[str] = []
+    current_section: str | None = None  # "personality" | "topic" | None
     current_speaker = None
     current_attrs: dict = {}
     current_lines: list[str] = []
@@ -36,25 +42,37 @@ def parse_script(path: str) -> tuple[list[Turn], str]:
         for raw in f:
             line = raw.strip()
             if not line:
-                if in_context:
-                    context_lines.append("")
+                if current_section == "personality":
+                    personality_lines.append("")
+                elif current_section == "topic":
+                    topic_lines.append("")
                 continue
-            if line == "[CONTEXT]":
-                in_context = True
+
+            if line in ("[PERSONALITY]", "[CONTEXT]"):
+                current_section = "personality"
                 continue
+            if line == "[TOPIC]":
+                current_section = "topic"
+                continue
+
             m = header_re.match(line)
             if m:
-                in_context = False
+                current_section = None
                 flush()
                 current_lines = []
                 current_speaker = m.group(1)
                 attrs_str = m.group(2).strip()
                 current_attrs = dict(re.findall(r"(\w+)=(\S+)", attrs_str))
-            elif in_context:
-                context_lines.append(line)
+            elif current_section == "personality":
+                personality_lines.append(line)
+            elif current_section == "topic":
+                topic_lines.append(line)
             elif current_speaker:
                 current_lines.append(line)
 
     flush()
-    context = "\n".join(context_lines).strip()
-    return turns, context
+    return (
+        turns,
+        "\n".join(personality_lines).strip(),
+        "\n".join(topic_lines).strip(),
+    )

@@ -127,18 +127,20 @@
     /* Context block */
     .context-block {
       flex-shrink: 0; padding: 0.7rem 1rem; border-bottom: 1px solid #1a1a1a;
+      display: flex; gap: 0.8rem;
     }
-    .context-block label {
-      display: block; font-size: 0.7rem; color: #444;
-      letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.4rem;
+    .context-field { flex: 1; display: flex; flex-direction: column; gap: 0.35rem; }
+    .context-field label {
+      font-size: 0.7rem; color: #444;
+      letter-spacing: 0.09em; text-transform: uppercase;
     }
-    #ed-context {
+    .context-field textarea {
       width: 100%; background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 5px;
-      color: #888; font-size: 0.83rem; font-family: inherit; line-height: 1.55;
-      padding: 0.5rem 0.7rem; resize: vertical; min-height: 64px;
+      color: #888; font-size: 0.82rem; font-family: inherit; line-height: 1.5;
+      padding: 0.45rem 0.65rem; resize: vertical; min-height: 60px;
     }
-    #ed-context:focus { outline: none; border-color: #333; color: #bbb; }
-    #ed-context::placeholder { color: #2a2a2a; }
+    .context-field textarea:focus { outline: none; border-color: #333; color: #bbb; }
+    .context-field textarea::placeholder { color: #2a2a2a; }
 
     /* Turn cards */
     #turn-list { flex: 1; overflow-y: auto; padding: 0.8rem 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
@@ -194,6 +196,28 @@
     }
     #btn-add-turn:hover { border-color: #444; color: #666; }
 
+    /* ── Teleprompter overlay ── */
+    #teleprompter {
+      display: none; position: absolute; inset: 0; z-index: 10;
+      background: #080808; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 3rem 4rem; text-align: center;
+    }
+    #teleprompter.active { display: flex; }
+    #tp-speaker {
+      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #60a5fa; margin-bottom: 1.2rem;
+    }
+    #tp-text {
+      font-size: 2.6rem; line-height: 1.4; color: #f0f0f0; font-weight: 500;
+      max-width: 900px;
+    }
+    #tp-next {
+      margin-top: 2.5rem; font-size: 0.9rem; color: #2a2a2a; max-width: 700px; line-height: 1.5;
+    }
+    #tp-next span { color: #a78bfa; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.1em; display: block; margin-bottom: 0.4rem; }
+
     /* ── Footer ── */
     footer {
       flex-shrink: 0; padding: 0.65rem 1.2rem; border-top: 1px solid #1a1a1a;
@@ -229,7 +253,12 @@
   <div id="main">
 
     <!-- Perform -->
-    <div id="view-perform">
+    <div id="view-perform" style="position:relative;">
+      <div id="teleprompter">
+        <div id="tp-speaker">You</div>
+        <div id="tp-text"></div>
+        <div id="tp-next"><span>Reachy next</span><span id="tp-next-text"></span></div>
+      </div>
       <div id="script-view"></div>
     </div>
 
@@ -241,8 +270,14 @@
         <span class="saved-flash" id="saved-flash">Saved ✓</span>
       </div>
       <div class="context-block">
-        <label>Episode context</label>
-        <textarea id="ed-context" rows="3" placeholder="Topic, tone, personality notes for this episode… e.g. 'Topic: history of fonts. Reachy is particularly obsessed with Helvetica and gets defensive about Comic Sans.'"></textarea>
+        <div class="context-field">
+          <label>Personality</label>
+          <textarea id="ed-personality" rows="3" placeholder="How Reachy should act this episode — quirks, opinions, tone. e.g. 'Obsessed with Helvetica. Gets defensive about Comic Sans. Finds the human's enthusiasm a little exhausting.'"></textarea>
+        </div>
+        <div class="context-field">
+          <label>Topic & Background</label>
+          <textarea id="ed-topic" rows="3" placeholder="Facts and context Reachy can draw on. e.g. 'This episode covers typography history from Gutenberg to CSS web fonts. Key figures: Garamond, Bodoni, Adrian Frutiger.'"></textarea>
+        </div>
       </div>
       <div id="turn-list"></div>
       <button id="btn-add-turn" onclick="addTurn()">+ Add turn</button>
@@ -254,6 +289,7 @@
 <footer>
   <button class="btn-primary" id="btn-next" onclick="nextTurn()">Start →</button>
   <span id="footer-status"></span>
+  <button class="tab-btn" id="btn-tp" onclick="toggleTeleprompter()" style="margin-left:auto;">⬛ Teleprompter</button>
 </footer>
 
 <script>
@@ -265,6 +301,7 @@ const GESTURES = [
 
 // ── App state ──
 let appState = { turns:[], index:-1, status:"idle", total:0 };
+let teleprompterOn = false;
 let scripts = [];
 let activeScript = null;
 let editorTurns = [];       // structured turns in the editor
@@ -276,6 +313,7 @@ es.addEventListener("state", e => {
   appState = JSON.parse(e.data);
   renderPerform();
   renderFooter();
+  renderTeleprompter();
 });
 
 // ── Tabs ──
@@ -338,8 +376,9 @@ async function openInEditor(name) {
   const data = await res.json();
   editorSourceName = name;
   document.getElementById("ed-filename").value = name;
-  const { context, turns } = parseScriptText(data.content);
-  document.getElementById("ed-context").value = context;
+  const { personality, topic, turns } = parseScriptText(data.content);
+  document.getElementById("ed-personality").value = personality;
+  document.getElementById("ed-topic").value = topic;
   editorTurns = turns;
   renderEditor();
   setTab("edit");
@@ -348,7 +387,8 @@ async function openInEditor(name) {
 function newScript() {
   editorSourceName = null;
   document.getElementById("ed-filename").value = "new-script.txt";
-  document.getElementById("ed-context").value = "";
+  document.getElementById("ed-personality").value = "";
+  document.getElementById("ed-topic").value = "";
   editorTurns = [
     { speaker:"HUMAN",  text:"", gesture:"idle", improv:false, hint:"" },
     { speaker:"REACHY", text:"", gesture:"nod",  improv:false, hint:"" },
@@ -363,11 +403,13 @@ function parseScriptText(raw) {
   let current = null;
   let inContext = false;
   const contextLines = [];
+  const topicLines = [];
   const lines = raw.split("\n");
   const headerRe = /^\[(HUMAN|REACHY)([^\]]*)\]$/;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed === "[CONTEXT]") { inContext = true; continue; }
+    if (trimmed === "[PERSONALITY]" || trimmed === "[CONTEXT]") { inContext = "personality"; continue; }
+    if (trimmed === "[TOPIC]") { inContext = "topic"; continue; }
     const m = headerRe.exec(trimmed);
     if (m) {
       inContext = false;
@@ -380,22 +422,23 @@ function parseScriptText(raw) {
         speaker: m[1], text: "", gesture: attrs.gesture || "idle",
         improv: attrs.improv === "true", hint: "",
       };
-    } else if (inContext) {
+    } else if (inContext === "personality") {
       contextLines.push(line);
+    } else if (inContext === "topic") {
+      topicLines.push(line);
     } else if (current && trimmed) {
       if (current.improv) current.hint = (current.hint ? current.hint + " " : "") + trimmed;
       else current.text = (current.text ? current.text + " " : "") + trimmed;
     }
   }
   if (current) turns.push(current);
-  return { context: contextLines.join("\n").trim(), turns };
+  return { personality: contextLines.join("\n").trim(), topic: topicLines.join("\n").trim(), turns };
 }
 
-function serializeScriptText(turns, context) {
+function serializeScriptText(turns, personality, topic) {
   const parts = [];
-  if (context && context.trim()) {
-    parts.push("[CONTEXT]\n" + context.trim());
-  }
+  if (personality && personality.trim()) parts.push("[PERSONALITY]\n" + personality.trim());
+  if (topic && topic.trim())             parts.push("[TOPIC]\n"       + topic.trim());
   for (const t of turns) {
     let header = `[${t.speaker}`;
     if (t.speaker === "REACHY") {
@@ -553,8 +596,9 @@ async function saveScript() {
     if (!confirm(`"${filename}" already exists. Overwrite it?`)) return;
   }
 
-  const context = document.getElementById("ed-context").value.trim();
-  const content = serializeScriptText(editorTurns, context);
+  const personality = document.getElementById("ed-personality").value.trim();
+  const topic = document.getElementById("ed-topic").value.trim();
+  const content = serializeScriptText(editorTurns, personality, topic);
   const res = await fetch(`/api/scripts/${encodeURIComponent(filename)}`, {
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -620,6 +664,42 @@ function renderFooter() {
 async function nextTurn() {
   document.getElementById("btn-next").disabled = true;
   await fetch("/api/next", {method:"POST"});
+}
+
+function toggleTeleprompter() {
+  teleprompterOn = !teleprompterOn;
+  const btn = document.getElementById("btn-tp");
+  btn.classList.toggle("active", teleprompterOn);
+  btn.textContent = teleprompterOn ? "✕ Teleprompter" : "⬛ Teleprompter";
+  renderTeleprompter();
+}
+
+function renderTeleprompter() {
+  const el = document.getElementById("teleprompter");
+  if (!teleprompterOn) { el.classList.remove("active"); return; }
+
+  const { turns, index, status } = appState;
+  const current = turns[index];
+
+  // Show teleprompter when it's the human's turn (listening or waiting)
+  const isHumanTurn = current && current.speaker === "HUMAN" &&
+    (status === "listening" || status === "waiting");
+
+  if (!isHumanTurn) { el.classList.remove("active"); return; }
+
+  el.classList.add("active");
+  document.getElementById("tp-text").textContent = current.text || "…";
+
+  // Show next Reachy line as a small hint
+  const nextReachy = turns.slice(index + 1).find(t => t.speaker === "REACHY");
+  const nextEl = document.getElementById("tp-next");
+  const nextTextEl = document.getElementById("tp-next-text");
+  if (nextReachy && nextReachy.text) {
+    nextEl.style.display = "block";
+    nextTextEl.textContent = nextReachy.text;
+  } else {
+    nextEl.style.display = "none";
+  }
 }
 
 // ── Init ──
