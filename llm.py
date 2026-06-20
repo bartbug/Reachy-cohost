@@ -41,22 +41,25 @@ Available gestures and when to use them:
 Pick the gesture that most honestly fits your emotional reaction."""
 
 
-def _build_messages(turns: list[Turn], current_index: int) -> list[dict]:
+def _build_messages(turns: list[Turn], current_index: int, context: str = "") -> list[dict]:
     """Build a chat history from script turns up to (not including) the improv turn."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system = SYSTEM_PROMPT
+    if context:
+        system += f"\n\n## Episode context\n{context}"
+    messages = [{"role": "system", "content": system}]
 
     for i, turn in enumerate(turns[:current_index]):
         if turn.improv:
             continue  # skip improv placeholders from history
         role = "user" if turn.speaker == "HUMAN" else "assistant"
-        # For assistant turns, strip the JSON wrapper since those were real lines
         messages.append({"role": role, "content": turn.text})
 
     return messages
 
 
 def check_and_respond(
-    scripted_line: str, actual_line: str, turns: list[Turn], current_index: int
+    scripted_line: str, actual_line: str, turns: list[Turn], current_index: int,
+    context: str = ""
 ) -> tuple[bool, str, str]:
     """Single LLM call: detect off-script AND generate improv if needed.
 
@@ -66,7 +69,7 @@ def check_and_respond(
     if not actual_line:
         return False, "", ""
 
-    history = _build_messages(turns, current_index)
+    history = _build_messages(turns, current_index, context)
 
     prompt = (
         f'The scripted line was: "{scripted_line}"\n'
@@ -108,12 +111,12 @@ def check_and_respond(
         return False, "", ""
 
 
-def generate_improv(turns: list[Turn], current_index: int) -> tuple[str, str]:
+def generate_improv(turns: list[Turn], current_index: int, context: str = "") -> tuple[str, str]:
     """
     Ask the LLM to generate Reachy's next line given the conversation so far.
     Returns (line_text, gesture_name).
     """
-    messages = _build_messages(turns, current_index)
+    messages = _build_messages(turns, current_index, context)
 
     # The improv turn's text holds either a topic hint (scripted) or the actual
     # thing the human just said (off-script VAD trigger). Use it as context.

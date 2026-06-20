@@ -10,8 +10,12 @@ class Turn:
     improv: bool = False
 
 
-def parse_script(path: str) -> list[Turn]:
+def parse_script(path: str) -> tuple[list[Turn], str]:
+    """Parse a script file. Returns (turns, context) where context is the
+    freeform text from an optional [CONTEXT] block at the top of the file."""
     turns = []
+    context_lines: list[str] = []
+    in_context = False
     current_speaker = None
     current_attrs: dict = {}
     current_lines: list[str] = []
@@ -32,16 +36,25 @@ def parse_script(path: str) -> list[Turn]:
         for raw in f:
             line = raw.strip()
             if not line:
+                if in_context:
+                    context_lines.append("")
+                continue
+            if line == "[CONTEXT]":
+                in_context = True
                 continue
             m = header_re.match(line)
             if m:
+                in_context = False
                 flush()
                 current_lines = []
                 current_speaker = m.group(1)
                 attrs_str = m.group(2).strip()
                 current_attrs = dict(re.findall(r"(\w+)=(\S+)", attrs_str))
+            elif in_context:
+                context_lines.append(line)
             elif current_speaker:
                 current_lines.append(line)
 
     flush()
-    return turns
+    context = "\n".join(context_lines).strip()
+    return turns, context

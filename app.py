@@ -26,6 +26,7 @@ state = {
     "turns": [],
     "index": -1,
     "status": "idle",  # idle | waiting | listening | thinking | playing | done
+    "context": "",
 }
 
 # Audio + LLM cache: id(turn) -> (text, gesture, audio_array)
@@ -90,7 +91,7 @@ def _rest():
 # Prefetch
 # ---------------------------------------------------------------------------
 
-def _prefetch_script(turns: list):
+def _prefetch_script(turns: list, context: str = ""):
     """Background thread: pre-generate TTS (and LLM for improv=true) for all REACHY turns."""
     with _cache_lock:
         _cache.clear()
@@ -100,8 +101,7 @@ def _prefetch_script(turns: list):
             continue
         try:
             if turn.improv:
-                # Pre-generate LLM line + audio for scripted improv turns
-                line, gesture = generate_improv(turns, i)
+                line, gesture = generate_improv(turns, i, context)
                 audio = generate_audio(line)
                 print(f"[prefetch] turn {i} improv → gesture={gesture!r}")
             else:
@@ -141,7 +141,8 @@ def _play_reachy_turn(turn: Turn):
         with state_lock:
             turns = state["turns"]
             idx = state["index"]
-        line, gesture = generate_improv(turns, idx)
+            context = state["context"]
+        line, gesture = generate_improv(turns, idx, context)
         turn.text = line
         turn.gesture = gesture
         audio = None  # will use speak() fallback below
@@ -204,6 +205,7 @@ def _on_human_speech_end(audio):
             return
         turns = state["turns"]
         current_idx = state["index"]
+        context = state["context"]
 
     # Transcribe what was actually said
     _set_status("thinking")
@@ -224,7 +226,7 @@ def _on_human_speech_end(audio):
 
     # Single LLM call: detect off-script AND generate improv line if needed
     off_script, improv_line, improv_gesture = check_and_respond(
-        scripted_text, actual_text, turns, next_scripted_idx
+        scripted_text, actual_text, turns, next_scripted_idx, context
     )
 
     if off_script and improv_line:
@@ -325,14 +327,15 @@ def api_load():
     path = os.path.join(SCRIPTS_DIR, os.path.basename(name))
     if not os.path.exists(path):
         return jsonify({"error": "not found"}), 404
-    turns = parse_script(path)
+    turns, context = parse_script(path)
     with state_lock:
         state["turns"] = turns
         state["index"] = -1
         state["status"] = "waiting"
+        state["context"] = context
     _broadcast("state", _get_state_snapshot())
     # Pre-generate TTS (and LLM for improv=true turns) in the background
-    threading.Thread(target=_prefetch_script, args=(turns,), daemon=True).start()
+    threading.Thread(target=_prefetch_script, args=(turns, context), daemon=True).start()
     return jsonify({"ok": True, "turns": len(turns)})
 
 
