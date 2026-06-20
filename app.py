@@ -364,11 +364,12 @@ def api_events():
 def main():
     global mini, vad, animator
 
-    turns = parse_script(SCRIPT_PATH)
+    turns, context = parse_script(SCRIPT_PATH)
     with state_lock:
         state["turns"] = turns
         state["index"] = -1
         state["status"] = "waiting"
+        state["context"] = context
 
     print(f"Loaded {len(turns)} turns from {SCRIPT_PATH}")
     print("Connecting to Reachy...")
