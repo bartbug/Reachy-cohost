@@ -116,6 +116,67 @@ def check_and_respond(
         return False, "", ""
 
 
+def adjust_scripted_line(
+    scripted_line: str, improv_line: str, actual_line: str,
+    personality: str = "", topic: str = ""
+) -> tuple[str, str]:
+    """After an improv reaction, decide what to do with the upcoming scripted line.
+
+    Returns (action, new_line):
+    - ("keep", "")      — scripted line still works as written
+    - ("rewrite", line) — scripted line overlaps the improv; here's an adjusted version
+    - ("skip", "")      — improv fully covered it; drop the scripted line entirely
+    """
+    system = (
+        "You are helping a robot co-host keep a performed script flowing naturally. "
+        "The robot just ad-libbed a reaction, and you must decide whether its NEXT "
+        "scripted line still makes sense to say afterward."
+    )
+    if personality:
+        system += f"\n\nRobot personality: {personality}"
+    if topic:
+        system += f"\n\nEpisode background: {topic}"
+
+    prompt = (
+        f'The human just said: "{actual_line}"\n'
+        f'The robot ad-libbed this reaction: "{improv_line}"\n'
+        f'The robot\'s next scripted line is: "{scripted_line}"\n\n'
+        "Would saying the scripted line now sound repetitive or disjointed after the ad-lib?\n"
+        '- If it flows fine as written: {"action": "keep"}\n'
+        '- If it overlaps or needs a smoother transition, rewrite it (preserve its key content, '
+        'match the robot\'s voice, 1-3 sentences): {"action": "rewrite", "line": "<adjusted line>"}\n'
+        '- If the ad-lib already made every point in it, drop it: {"action": "skip"}\n'
+        "Respond with ONLY that JSON."
+    )
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.4},
+    }
+
+    try:
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = json.loads(resp.json()["message"]["content"])
+        action = data.get("action", "keep").strip().lower()
+        line = data.get("line", "").strip()
+        if action == "rewrite" and not line:
+            action = "keep"  # rewrite with no line is useless — fail safe
+        if action not in ("keep", "rewrite", "skip"):
+            action = "keep"
+        print(f"[llm] adjust_scripted_line → {action}" + (f" line={line!r}" if action == "rewrite" else ""))
+        return action, line if action == "rewrite" else ""
+    except Exception as e:
+        print(f"[llm] adjust_scripted_line failed: {e}")
+        return "keep", ""
+
+
 def generate_improv(turns: list[Turn], current_index: int, personality: str = "", topic: str = "") -> tuple[str, str]:
     """
     Ask the LLM to generate Reachy's next line given the conversation so far.

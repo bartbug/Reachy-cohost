@@ -11,7 +11,7 @@ from reachy_mini.utils import create_head_pose
 from script_parser import parse_script, Turn
 from gestures import play_gesture, ListeningAnimator
 from tts import speak, generate_audio, play_audio
-from llm import generate_improv, check_and_respond
+from llm import generate_improv, check_and_respond, adjust_scripted_line
 from stt import transcribe
 from vad import VADListener
 
@@ -234,11 +234,45 @@ def _on_human_speech_end(audio):
     if off_script and improv_line:
         # Insert reactive improv turn before the next scripted REACHY turn
         improv_turn = Turn(speaker="REACHY", text=improv_line, gesture=improv_gesture, improv=True)
+        scripted_turn = turns[next_scripted_idx]  # the line the improv may now overlap
         with state_lock:
             state["turns"].insert(next_scripted_idx, improv_turn)
             state["index"] = next_scripted_idx
         _broadcast("state", _get_state_snapshot())
+
+        # While the improv audio plays, decide in the background whether the
+        # upcoming scripted line still works, needs a rewrite, or should be skipped.
+        adjust_result: dict = {}
+
+        def _adjust():
+            action, new_line = adjust_scripted_line(
+                scripted_turn.text, improv_line, actual_text, personality, topic
+            )
+            adjust_result["action"] = action
+            adjust_result["line"] = new_line
+
+        adjust_thread = threading.Thread(target=_adjust, daemon=True)
+        adjust_thread.start()
         _play_reachy_turn(improv_turn)
+        adjust_thread.join(timeout=20)
+
+        action = adjust_result.get("action", "keep")
+        if action == "skip":
+            with state_lock:
+                if scripted_turn in state["turns"]:
+                    state["turns"].remove(scripted_turn)
+            with _cache_lock:
+                _cache.pop(id(scripted_turn), None)
+            _broadcast("state", _get_state_snapshot())
+        elif action == "rewrite":
+            new_line = adjust_result["line"]
+            scripted_turn.text = new_line
+            # Stale cache entry has the old audio — replace it with the new line's
+            new_audio = generate_audio(new_line)
+            with _cache_lock:
+                _cache[id(scripted_turn)] = (new_line, scripted_turn.gesture, new_audio)
+            _broadcast("state", _get_state_snapshot())
+
         _after_reachy_turn()
     else:
         # On-script — advance to next scripted REACHY turn (likely cache hit)
