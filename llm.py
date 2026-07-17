@@ -3,6 +3,19 @@
 import json
 import requests
 from script_parser import Turn
+from emotes import CATEGORIES, ALL_EMOTES, LEGACY_ALIASES
+
+# Emote palette rendered into the system prompt, grouped by vibe
+_GESTURE_GUIDE = "\n".join(
+    f"- {category}: {', '.join(names)}" for category, names in CATEGORIES.items()
+)
+
+_VALID_GESTURES = set(ALL_EMOTES) | set(LEGACY_ALIASES) | {"idle"}
+
+
+def _clean_gesture(gesture: str) -> str:
+    gesture = (gesture or "").strip()
+    return gesture if gesture in _VALID_GESTURES else "idle"
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL = "qwen2.5:14b"
@@ -26,19 +39,12 @@ Your response rules:
 You must respond ONLY with valid JSON in this exact format:
 {"gesture": "<gesture>", "line": "<what you say>"}
 
-Available gestures and when to use them:
-- nod: agree, affirm, "yes exactly"
-- double_nod: emphatic agreement or enthusiasm
-- shake: disagree, amused disbelief, "no no no"
-- tilt_right / tilt_left: curious, considering, skeptical
-- look_up: recalling, thinking, "hm let me think"
-- think: deep pondering, philosophical moment
-- surprised: unexpected info, delight, shock
-- excited: genuine enthusiasm, can't contain it
-- bow: greeting, signing off, formal acknowledgement
-- idle: neutral, returning to rest
+Available gestures, grouped by vibe (pick ONE exact name):
+""" + _GESTURE_GUIDE + """
 
-Pick the gesture that most honestly fits your emotional reaction."""
+Pick the gesture that most honestly fits your emotional reaction — don't default
+to safe choices; a strong line deserves a strong gesture (laughing1, rage1,
+dying1, dance2...). Use "idle" only when genuinely neutral."""
 
 
 def _build_messages(
@@ -104,11 +110,7 @@ def check_and_respond(
             print("[llm] on-script")
             return False, "", ""
         line    = data.get("line", "").strip()
-        gesture = data.get("gesture", "idle").strip()
-        valid_gestures = {"nod", "double_nod", "shake", "tilt_right", "tilt_left",
-                          "look_up", "surprised", "bow", "excited", "think", "idle"}
-        if gesture not in valid_gestures:
-            gesture = "idle"
+        gesture = _clean_gesture(data.get("gesture", "idle"))
         print(f"[llm] off-script → gesture={gesture!r} line={line!r}")
         return True, line, gesture
     except Exception as e:
@@ -215,10 +217,7 @@ def generate_improv(turns: list[Turn], current_index: int, personality: str = ""
         line = content.strip()
         gesture = "idle"
 
-    valid_gestures = {"nod", "double_nod", "shake", "tilt_right", "tilt_left",
-                      "look_up", "surprised", "bow", "excited", "think", "idle"}
-    if gesture not in valid_gestures:
-        gesture = "idle"
+    gesture = _clean_gesture(gesture)
 
     print(f"[llm] gesture={gesture!r} line={line!r}")
     return line, gesture

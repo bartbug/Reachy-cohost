@@ -293,11 +293,19 @@
 </footer>
 
 <script>
-const GESTURES = [
-  "idle","nod","double_nod","shake",
-  "tilt_right","tilt_left","look_up","think",
-  "surprised","excited","bow"
-];
+const GESTURE_GROUPS = {
+  "neutral": ["idle"],
+  "agree / disagree": ["yes1","yes_sad1","no1","no_excited1","no_sad1","understanding1","understanding2"],
+  "curious / thinking": ["curious1","inquiring1","inquiring2","inquiring3","thoughtful1","thoughtful2","uncertain1","attentive1","attentive2"],
+  "surprise / shock": ["amazed1","surprised1","surprised2","confused1","incomprehensible2","lost1","oops1","oops2","fear1","scared1"],
+  "joy / excitement": ["cheerful1","enthusiastic1","enthusiastic2","laughing1","laughing2","success1","success2","proud1","proud2","proud3","electric1"],
+  "warmth": ["loving1","grateful1","welcoming1","welcoming2","helpful1","helpful2","calming1","serenity1","relief1","relief2","shy1"],
+  "displeasure": ["contempt1","disgusted1","displeased1","displeased2","irritated1","irritated2","frustrated1","furious1","rage1","reprimand1","reprimand2","reprimand3"],
+  "low energy / sad": ["boredom1","boredom2","tired1","exhausted1","downcast1","sad1","sad2","lonely1","anxiety1","resigned1","uncomfortable1","indifferent1"],
+  "impatience": ["impatient1","impatient2","go_away1","come1"],
+  "theatrical": ["dance1","dance2","dance3","dying1","toc-toc-toc"],
+  "classic (legacy)": ["nod","double_nod","shake","tilt_right","tilt_left","look_up","think","surprised","excited","bow"],
+};
 
 // ── App state ──
 let appState = { turns:[], index:-1, status:"idle", total:0 };
@@ -511,12 +519,25 @@ function makeTurnCard(turn, i) {
   gLabel.textContent = "Gesture";
   const gSel = document.createElement("select");
   gSel.className = "gesture-select";
-  GESTURES.forEach(g => {
+  const currentGesture = turn.gesture || "idle";
+  let found = false;
+  for (const [group, names] of Object.entries(GESTURE_GROUPS)) {
+    const og = document.createElement("optgroup");
+    og.label = group;
+    names.forEach(g => {
+      const o = document.createElement("option");
+      o.value = g; o.textContent = g.replace(/_/g," ");
+      if (g === currentGesture) { o.selected = true; found = true; }
+      og.appendChild(o);
+    });
+    gSel.appendChild(og);
+  }
+  if (!found && currentGesture) {
+    // Unknown gesture from a hand-edited script — keep it selectable
     const o = document.createElement("option");
-    o.value = g; o.textContent = g.replace("_"," ");
-    if (g === (turn.gesture || "idle")) o.selected = true;
+    o.value = currentGesture; o.textContent = currentGesture; o.selected = true;
     gSel.appendChild(o);
-  });
+  }
   gSel.onchange = () => { editorTurns[i].gesture = gSel.value; };
   gLabel.appendChild(gSel);
 

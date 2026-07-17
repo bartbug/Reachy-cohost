@@ -9,7 +9,9 @@ from flask import Flask, Response, request, jsonify, send_from_directory
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from script_parser import parse_script, Turn
-from gestures import play_gesture, ListeningAnimator
+from gestures import ListeningAnimator
+import emotes
+from emotes import play_emote
 from tts import speak, generate_audio, play_audio
 from llm import generate_improv, check_and_respond, adjust_scripted_line
 from stt import transcribe
@@ -74,6 +76,7 @@ def _set_status(s: str):
 def _rest():
     """Stop animation and return Reachy to neutral resting pose."""
     try:
+        emotes.stop_current(mini)
         animator.stop()
         vad.disable()
         mini.goto_target(
@@ -153,20 +156,16 @@ def _play_reachy_turn(turn: Turn):
         audio = None  # will use speak() fallback below
         _set_status("playing")
 
-    # Estimate how long the named gesture lasts so speaking idle waits for it
-    gesture_durations = {
-        "nod": 1.3, "double_nod": 1.1, "shake": 1.2, "tilt_right": 1.5,
-        "tilt_left": 1.5, "look_up": 1.6, "surprised": 0.7, "bow": 1.4,
-        "excited": 0.95, "think": 1.9, "idle": 0.4,
-    }
-    gesture_dur = gesture_durations.get(gesture, 1.2)
-
-    play_gesture(mini, gesture)
-    animator.start_speaking(gesture_duration=gesture_dur)
+    # Play the recorded emote (threaded); its real duration tells the speaking
+    # animator when to take over. Unknown/idle names → no emote, animator leads.
+    emote_dur = play_emote(mini, gesture)
+    animator.start_speaking(gesture_duration=emote_dur if emote_dur > 0 else 0.4)
     if audio is not None:
         play_audio(mini, audio)
     else:
         speak(mini, turn.text)
+    # If the emote outlasted the line, cut it so it can't fight the next mode.
+    emotes.stop_current(mini)
     animator.stop()
 
 
@@ -399,6 +398,8 @@ def api_events():
 
 def main():
     global mini, vad, animator
+
+    emotes.load_library()
 
     turns, personality, topic = parse_script(SCRIPT_PATH)
     with state_lock:
