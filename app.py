@@ -105,6 +105,8 @@ def _prefetch_script(turns: list, personality: str = "", topic: str = ""):
         try:
             if turn.improv:
                 line, gesture = generate_improv(turns, i, personality, topic)
+                if turn.gesture and turn.gesture != "idle":
+                    gesture = turn.gesture  # script-specified emote wins over LLM pick
                 audio = generate_audio(line)
                 print(f"[prefetch] turn {i} improv → gesture={gesture!r}")
             else:
@@ -147,6 +149,8 @@ def _play_reachy_turn(turn: Turn):
             personality = state["personality"]
             topic = state["topic"]
         line, gesture = generate_improv(turns, idx, personality, topic)
+        if turn.gesture and turn.gesture != "idle":
+            gesture = turn.gesture  # script-specified emote wins over LLM pick
         turn.text = line
         turn.gesture = gesture
         audio = None  # will use speak() fallback below

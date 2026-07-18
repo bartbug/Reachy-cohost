@@ -450,7 +450,7 @@ function serializeScriptText(turns, personality, topic) {
   for (const t of turns) {
     let header = `[${t.speaker}`;
     if (t.speaker === "REACHY") {
-      if (!t.improv && t.gesture && t.gesture !== "idle") header += ` gesture=${t.gesture}`;
+      if (t.gesture && t.gesture !== "idle") header += ` gesture=${t.gesture}`;
       if (t.improv) header += " improv=true";
     }
     header += "]";
