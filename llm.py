@@ -86,7 +86,9 @@ def check_and_respond(
         f'The scripted line was: "{scripted_line}"\n'
         f'What the human actually said: "{actual_line}"\n\n'
         "Did they go meaningfully off-script — introducing a new idea, question, or tangent "
-        "not present in the scripted line? Minor rephrasing or omissions are ON-script.\n\n"
+        "not present in the scripted line? Minor rephrasing or omissions are ON-script. "
+        "The transcript comes from speech-to-text and may contain mishearings — if a "
+        "difference is phonetically similar to the scripted words, treat it as ON-script.\n\n"
         'If ON-script respond ONLY with: {"off_script": false}\n'
         'If OFF-script, respond as Reachy reacting to what they said:\n'
         '{"off_script": true, "gesture": "<gesture>", "line": "<your reaction>"}'

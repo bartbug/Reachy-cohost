@@ -1,8 +1,10 @@
 """Video essay co-host app — M3: scripted playback + VAD-triggered improv."""
 
+import difflib
 import json
 import os
 import queue
+import re
 import threading
 from flask import Flask, Response, request, jsonify, send_from_directory
 
@@ -202,6 +204,19 @@ def _after_reachy_turn():
         _after_reachy_turn()
 
 
+def _is_close_to_script(scripted: str, actual: str, threshold: float = 0.75) -> bool:
+    """Fuzzy match transcript vs. scripted line — high similarity means on-script."""
+    if not scripted or not actual:
+        return False
+    norm = lambda s: re.sub(r"[^a-z0-9 ]", "", s.lower()).split()
+    a, b = norm(scripted), norm(actual)
+    if not a or not b:
+        return False
+    ratio = difflib.SequenceMatcher(None, a, b).ratio()
+    print(f"[gate] similarity={ratio:.2f} → {'on-script' if ratio >= threshold else 'ask LLM'}")
+    return ratio >= threshold
+
+
 def _on_human_speech_end(audio):
     """VAD callback: human finished speaking. Transcribe, check off-script, route."""
     with state_lock:
@@ -212,12 +227,13 @@ def _on_human_speech_end(audio):
         personality = state["personality"]
         topic = state["topic"]
 
-    # Transcribe what was actually said
-    _set_status("thinking")
-    actual_text = transcribe(audio)
-
     # Find the scripted line for the current HUMAN turn
     scripted_text = turns[current_idx].text if current_idx >= 0 else ""
+
+    # Transcribe what was actually said, biased toward the scripted line so
+    # flubbed-but-close deliveries don't get misheard into "off-script" text
+    _set_status("thinking")
+    actual_text = transcribe(audio, expected=scripted_text)
 
     # Determine next scripted REACHY turn
     next_scripted_idx = current_idx + 1
@@ -229,10 +245,15 @@ def _on_human_speech_end(audio):
         _set_status("done")
         return
 
-    # Single LLM call: detect off-script AND generate improv line if needed
-    off_script, improv_line, improv_gesture = check_and_respond(
-        scripted_text, actual_text, turns, next_scripted_idx, personality, topic
-    )
+    # Cheap similarity gate: if the transcript is close to the script, it's
+    # on-script — skip the LLM judge entirely (saves 1-2s on most turns)
+    if _is_close_to_script(scripted_text, actual_text):
+        off_script, improv_line, improv_gesture = False, "", ""
+    else:
+        # Single LLM call: detect off-script AND generate improv line if needed
+        off_script, improv_line, improv_gesture = check_and_respond(
+            scripted_text, actual_text, turns, next_scripted_idx, personality, topic
+        )
 
     if off_script and improv_line:
         # Insert reactive improv turn before the next scripted REACHY turn

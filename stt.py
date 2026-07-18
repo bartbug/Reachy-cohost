@@ -15,12 +15,20 @@ def _get_model() -> WhisperModel:
     return _model
 
 
-def transcribe(audio: np.ndarray, sample_rate: int = 16000) -> str:
-    """Transcribe float32 mono audio to text. Returns empty string on failure."""
+def transcribe(audio: np.ndarray, sample_rate: int = 16000, expected: str = "") -> str:
+    """Transcribe float32 mono audio to text. Returns empty string on failure.
+
+    `expected` (the scripted line, if any) is passed as Whisper's initial_prompt,
+    biasing transcription toward the words we anticipate — a slightly flubbed
+    delivery gets heard as the script instead of drifting into mishearings.
+    """
     if len(audio) < sample_rate * 0.3:  # less than 300ms — probably noise
         return ""
     model = _get_model()
-    segments, _ = model.transcribe(audio, language="en", beam_size=1, vad_filter=True)
+    segments, _ = model.transcribe(
+        audio, language="en", beam_size=1, vad_filter=True,
+        initial_prompt=expected or None,
+    )
     text = " ".join(s.text.strip() for s in segments).strip()
     print(f"[stt] transcribed: {text!r}")
     return text
